@@ -7,8 +7,8 @@ showAsResourcePack=false
 [[mods]]
 modId="mojotest"
 version="1.0.0"
-displayName="Austin's Powerful Language Provider: Keeping It Groovy Baby"
+displayName="APLPKIGB Mojo Test"
 authors="TheSilkMiner"
 description='''
-Not that it matters, since this will not be packaged into the JAR anyway
+Happy little testing mod for APLP
 '''

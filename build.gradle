@@ -8,12 +8,13 @@ plugins {
     id 'org.cadixdev.licenser' version '0.6.1'
 }
 
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import com.github.jengelman.gradle.plugins.shadow.transformers.Transformer
 import com.github.jengelman.gradle.plugins.shadow.transformers.TransformerContext
+import groovy.lang.Closure
 import shadow.org.apache.tools.zip.ZipEntry
 import shadow.org.apache.tools.zip.ZipOutputStream
 import shadow.org.codehaus.plexus.util.IOUtil
-import groovy.lang.Closure
 
 class UpdatedGroovyExtensionModuleTransformer implements Transformer {
 
@@ -94,32 +95,20 @@ class UpdatedGroovyExtensionModuleTransformer implements Transformer {
 static String getGitCommit() {
     def proc = 'git rev-parse --short HEAD'.execute()
     proc.waitFor()
-    return proc.exitValue()? "ERROR(${proc.exitValue()})" : proc.text.trim()
-}
-
-static tryRenameFile(final it) {
-    if (it.path.contains('net/thesilkminer/mc')) {
-        if (it.path.endsWith('.class') && !it.path.contains('boot')) {
-            it.path = "aplp_module_hider/${it.path}"
-        }
-    } else if (it.path.contains('/services/')) {
-        if (it.path.contains('IModLanguageProvider') || it.path.contains('.groovy.transform.')) {
-            it.path = it.path.replace('/services/', '/aplp_services/')
-        }
-    }
+    return proc.exitValue() ? "ERROR(${proc.exitValue()})" : proc.text.trim()
 }
 
 def groovy(def name) {
     return [
-            group: 'org.apache.groovy',
-            name: name == 'stdlib'? 'groovy' : "groovy-${name}",
+            group  : 'org.apache.groovy',
+            name   : name == 'stdlib' ? 'groovy' : "groovy-${name}",
             version: project.ext.groovyVersion
     ]
 }
 
 version = '1.0.1'
 group = 'net.thesilkminer.mc.austin'
-archivesBaseName = 'austin-powerful-language-provider-keeping-it-groovy-baby'
+archivesBaseName = 'aplpkigb'
 
 java {
     toolchain.languageVersion = JavaLanguageVersion.of(JavaVersion.VERSION_17.majorVersion)
@@ -134,6 +123,124 @@ license {
     ext['app'] = 'APLP: KIGB'
 }
 
+sourceSets {
+    game {}
+    plugin {}
+}
+
+configurations {
+    shade {}
+    yeet {}
+    api.extendsFrom(shade)
+
+    gameImplementation.extendsFrom minecraft, shade
+    pluginImplementation.extendsFrom implementation
+}
+
+dependencies {
+    pluginImplementation sourceSets.game.output
+
+    testImplementation sourceSets.plugin.output
+    testCompileOnly sourceSets.game.output
+}
+
+def sharedManifest = manifest {
+    attributes([
+            "Specification-Title"     : "austins-powerful-language-provider-keeping-it-groovy-baby",
+            "Specification-Vendor"    : "TheSilkMiner",
+            "Specification-Version"   : "1",
+            "Implementation-Title"    : project.name,
+            "Implementation-Version"  : project.version,
+            "Implementation-Vendor"   : "TheSilkMiner",
+            "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
+            "GitCommit"               : getGitCommit(),
+    ])
+}
+
+task groovyJar(type: ShadowJar) {
+    archiveClassifier = 'groovy'
+    configurations = [project.configurations.shade]
+    [
+            '**/module-info.class',
+            'LICENSE.txt',
+            'LICENSE-junit.txt',
+            'META-INF/LICENSE.txt',
+            'META-INF/LICENSE.md',
+            'META-INF/NOTICE.txt',
+            '**/*.kotlin-module'
+    ].each { exclude it }
+}
+
+task pluginJar(type: Jar) {
+    archiveClassifier = 'plugin'
+    from project.sourceSets.plugin.output
+    [
+            'LICENSE.txt',
+            '**/*.psd',
+            'META-INF/services/org.codehaus.groovy.transform.ASTTransformation' // Only needed at compile time
+    ].each { exclude it }
+    manifest {
+        from sharedManifest
+        
+        attributes([
+                "FMLModType": "LANGPROVIDER",
+        ])
+    }
+}
+
+task gameJar(type: Jar) {
+    archiveClassifier = 'game'
+    from project.sourceSets.game.output
+    exclude '**/*.psd'
+    
+    manifest {
+        from sharedManifest
+    }
+}
+
+jar {
+    finalizedBy 'reobfJar'
+
+    from groovyJar
+    from pluginJar
+    from gameJar
+
+    manifest {
+        from sharedManifest
+        
+        attributes([
+                "Automatic-Module-Name": "net.thesilkminer.mc.aplpkigb.boot"
+        ])
+    }
+}
+
+tasks.whenTaskAdded {
+    if (it.name == 'prepareRuns') {
+        it.dependsOn(jar)
+    }
+}
+
+shadowJar {
+    dependsOn 'reobfJar'
+    finalizedBy 'reobfShadowJar'
+    
+    archiveClassifier = 'transform'
+    configurations = []
+    [
+            '**/module-info.class',
+            'LICENSE.txt',
+            'LICENSE-junit.txt',
+            'META-INF/LICENSE.txt',
+            'META-INF/LICENSE.md',
+            'META-INF/NOTICE.txt',
+            '**/*.kotlin-module',
+            '**/*.psd',
+            'META-INF/services/org.codehaus.groovy.transform.ASTTransformation' // Only needed at compile time
+    ].each { exclude it }
+    transform(UpdatedGroovyExtensionModuleTransformer)
+    mergeServiceFiles()
+}
+
 minecraft {
     mappings channel: 'official', version: '1.18.2'
 
@@ -144,9 +251,7 @@ minecraft {
             property 'forge.logging.console.level', 'debug'
 
             lazyToken('minecraft_classpath') {
-                def shaded = configurations.shade.copyRecursive().resolve().collect { it.absolutePath }
-                def jar = tasks.rtJar.archiveFile.get().asFile.absolutePath
-                return (shaded + [jar]).join(File.pathSeparator)
+                tasks.jar.archiveFile.get().asFile.absolutePath
             }
 
             mods {
@@ -164,9 +269,7 @@ minecraft {
             args 'nogui'
 
             lazyToken('minecraft_classpath') {
-                def shaded = configurations.shade.copyRecursive().resolve().collect { it.absolutePath }
-                def jar = tasks.rtJar.archiveFile.get().asFile.absolutePath
-                return (shaded + [jar]).join(File.pathSeparator)
+                tasks.jar.archiveFile.get().asFile.absolutePath
             }
 
             mods {
@@ -178,18 +281,13 @@ minecraft {
     }
 }
 
-configurations {
-    shade {}
-    yeet {}
-    api.extendsFrom(shade)
-}
-
 repositories {
     mavenCentral()
 }
 
 dependencies {
     minecraft group: 'net.minecraftforge', name: 'forge', version: "${mcVersion}-40.0.5"
+
     shade groovy('stdlib')
     shade groovy('ant')
     shade groovy('astbuilder')
@@ -227,67 +325,10 @@ dependencies {
     shade groovy('yaml')
 }
 
-jar {
-    archiveClassifier = ''
-    manifest {
-        attributes([
-            "Specification-Title": "austins-powerful-language-provider-keeping-it-groovy-baby",
-            "Specification-Vendor": "TheSilkMiner",
-            "Specification-Version": "1",
-            "Implementation-Title": project.name,
-            "Implementation-Version": archiveVersion.get(),
-            "Implementation-Vendor" : "TheSilkMiner",
-            "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
-            "GitCommit": getGitCommit(),
-            "FMLModType": "LANGPROVIDER",
-            "Automatic-Module-Name": "net.thesilkminer.mc.aplpkigb.boot"
-        ])
-    }
-}
-
-shadowJar {
-    archiveClassifier = 'all'
-    configurations = [project.configurations.shade]
-    [
-            '**/module-info.class',
-            'LICENSE.txt',
-            'LICENSE-junit.txt',
-            'META-INF/LICENSE.txt',
-            'META-INF/LICENSE.md',
-            'META-INF/NOTICE.txt',
-            '**/*.kotlin-module',
-            '**/*.psd',
-            'META-INF/services/org.codehaus.groovy.transform.ASTTransformation' // Only needed at compile time
-    ].each { exclude it }
-    transform(UpdatedGroovyExtensionModuleTransformer)
-    mergeServiceFiles()
-    eachFile {
-        tryRenameFile(it)
-    }
-}
-
-task rtJar(type: Jar) {
-    from sourceSets.main.output
-    archiveClassifier = 'rt'
-    manifest {
-        attributes([
-                "Specification-Title": "austins-powerful-language-provider-keeping-it-groovy-baby",
-                "Specification-Vendor": "TheSilkMiner",
-                "Specification-Version": "1",
-                "Implementation-Title": project.name,
-                "Implementation-Version": archiveVersion.get(),
-                "Implementation-Vendor" : "TheSilkMiner",
-                "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
-                "GitCommit": getGitCommit(),
-                "Automatic-Module-Name": "net.thesilkminer.mc.aplpkigb.boot"
-        ])
-    }
-    eachFile {
-        tryRenameFile(it)
-    }
-}
-
 task testJar(type: Jar) {
+    dependsOn 'shadowJar'
+    finalizedBy 'reobfTestJar'
+    
     from sourceSets.test.output
     archiveClassifier = 'test'
 }
@@ -326,18 +367,6 @@ tasks.withType(GenerateModuleMetadata).configureEach {
     enabled = false
 }
 
-tasks.whenTaskAdded {
-    if (it.name == 'prepareRuns') {
-        it.dependsOn(rtJar)
-    }
-}
-
-jar.finalizedBy('reobfJar')
-shadowJar.finalizedBy('reobfShadowJar')
-testJar.finalizedBy('reobfTestJar')
-
-shadowJar.dependsOn('reobfJar')
-testJar.dependsOn('shadowJar')
 build.dependsOn('testJar')
 
 wrapper {
