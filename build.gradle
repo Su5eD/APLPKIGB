@@ -141,7 +141,6 @@ dependencies {
     pluginImplementation sourceSets.game.output
 
     testImplementation sourceSets.plugin.output
-    testCompileOnly sourceSets.game.output
 }
 
 def sharedManifest = manifest {
