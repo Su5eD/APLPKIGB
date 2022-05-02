@@ -56,14 +56,6 @@ public class AustinTransformationService implements ITransformationService {
     }
 
     @Override
-    public List<Resource> completeScan(IModuleLayerManager layerManager) {
-        String game = "aplpkigb-1.0.1-game.jar"; // TODO
-        return List.of(
-                new Resource(IModuleLayerManager.Layer.GAME, List.of(getSecureJij(game)))
-        );
-    }
-
-    @Override
     public void initialize(IEnvironment environment) {
 
     }
